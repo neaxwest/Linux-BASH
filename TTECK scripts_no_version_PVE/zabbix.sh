@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
+
+# Подключение функции сборки от TTECK
 source <(curl -s https://raw.githubusercontent.com/tteck/Proxmox/main/misc/build.func)
+
+# Авторское право и лицензия
 # Copyright (c) 2021-2024 tteck
 # Author: tteck (tteckster)
 # License: MIT
-# https://github.com/tteck/Proxmox/raw/main/LICENSE
 
 function header_info {
 clear
@@ -18,12 +21,15 @@ EOF
 }
 header_info
 echo -e "Loading..."
+
 APP="Zabbix"
 var_disk="6"
 var_cpu="2"
 var_ram="4096"
 var_os="debian"
 var_version="12"
+
+# Загружаем переменные и функции из build.func
 variables
 color
 catch_errors
@@ -53,15 +59,19 @@ function default_settings() {
 }
 
 function update_script() {
-header_info
-if [[ ! -f /etc/zabbix/zabbix_server.conf ]]; then msg_error "No ${APP} Installation Found!"; exit; fi
-msg_info "Updating $APP LXC"
-apt-get update &>/dev/null
-apt-get -y upgrade &>/dev/null
-systemctl restart zabbix-server
-msg_ok "Updated $APP LXC"
-exit
+  header_info
+  if [[ ! -f /etc/zabbix/zabbix_server.conf ]]; then 
+    msg_error "No ${APP} Installation Found!"; exit 
+  fi
+  msg_info "Updating $APP LXC"
+  apt-get update &>/dev/null
+  apt-get -y upgrade &>/dev/null
+  systemctl restart zabbix-server
+  msg_ok "Updated $APP LXC"
+  exit
 }
+
+# ??? Убрана проверка на минимальную версию Proxmox
 
 start
 build_container
