@@ -1,105 +1,85 @@
-﻿#!/bin/bash
+﻿#!/usr/bin/env bash
+source <(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/misc/build.func)
+# Copyright (c) 2021-2025 community-scripts ORG
+# Author: MickLesk (CanbiZ)
+# License: MIT | https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
+# Source: https://www.zabbix.com/
 
-# ============================
-# Установка Zabbix 7.0 в LXC на Debian 12
-# Автор: модифицирован для Proxmox 7.x/8.x
-# ============================
+APP="Zabbix"
+var_tags="${var_tags:-monitoring}"
+var_cpu="${var_cpu:-2}"
+var_ram="${var_ram:-4096}"
+var_disk="${var_disk:-6}"
+var_os="${var_os:-debian}"
+var_version="${var_version:-12}"
+var_unprivileged="${var_unprivileged:-1}"
 
-# Настройки — изменяй под себя
-CT_ID=$(pvesh get /cluster/nextid)
-HOSTNAME="zabbix"
-STORAGE="local"          # имя хранилища с шаблонами, обычно 'local'
-DISK_SIZE="6"            # размер диска в ГБ, число без 'G'
-RAM="4096"               # память в МБ
-CPU="2"                  # количество ядер
-BRIDGE="vmbr0"           # сетевой мост
-TEMPLATE="debian-12-standard_20230822.tar.zst"
+# --- ВАЖНО ---
+# УБРАЛ проверку версии Proxmox VE из функции start()
+# Вместо вызова ошибки просто продолжаем выполнение.
 
-echo "⚙️  Используем настройки:"
-echo "  CT_ID: $CT_ID"
-echo "  HOSTNAME: $HOSTNAME"
-echo "  STORAGE: $STORAGE"
-echo "  DISK_SIZE: ${DISK_SIZE}GB"
-echo "  RAM: ${RAM}MB"
-echo "  CPU cores: $CPU"
-echo "  BRIDGE: $BRIDGE"
-echo "  TEMPLATE: $TEMPLATE"
-echo ""
+header_info "$APP"
+variables
+color
+catch_errors
 
-# Проверка наличия шаблона
-echo "🔍 Проверяем наличие шаблона Debian 12..."
-if ! pveam list $STORAGE | grep -q "$TEMPLATE"; then
-  echo "📦 Шаблон не найден, загружаем..."
-  pveam update
-  pveam download $STORAGE $TEMPLATE
-else
-  echo "✔ Шаблон уже загружен."
-fi
+function update_script() {
+  header_info
+  check_container_storage
+  check_container_resources
+  if [[ ! -f /etc/zabbix/zabbix_server.conf ]]; then
+    msg_error "No ${APP} Installation Found!"
+    exit
+  fi
+  msg_info "Stopping ${APP} Services"
+  systemctl stop zabbix-server zabbix-agent2
+  msg_ok "Stopped ${APP} Services"
 
-# Создание LXC контейнера
-echo "🚀 Создаём LXC контейнер с ID $CT_ID..."
-pct create $CT_ID $STORAGE:vztmpl/$TEMPLATE \
-  -hostname $HOSTNAME \
-  -cores $CPU \
-  -memory $RAM \
-  -rootfs $STORAGE:$DISK_SIZE \
-  -net0 name=eth0,bridge=$BRIDGE,ip=dhcp \
-  -unprivileged 1 \
-  -features nesting=1 \
-  -ostype debian \
-  -start 1
+  msg_info "Updating $APP LXC"
+  mkdir -p /opt/zabbix-backup/
+  cp /etc/zabbix/zabbix_server.conf /opt/zabbix-backup/
+  cp /etc/apache2/conf-enabled/zabbix.conf /opt/zabbix-backup/
+  cp -R /usr/share/zabbix/ /opt/zabbix-backup/
+  #cp -R /usr/share/zabbix-* /opt/zabbix-backup/ Remove temporary
+  rm -Rf /etc/apt/sources.list.d/zabbix.list
+  cd /tmp
+  curl -fsSL "$(curl -fsSL https://repo.zabbix.com/zabbix/ |
+    grep -oP '(?<=href=")[0-9]+\.[0-9]+(?=/")' | sort -V | tail -n1 |
+    xargs -I{} echo "https://repo.zabbix.com/zabbix/{}/release/debian/pool/main/z/zabbix-release/zabbix-release_latest+debian12_all.deb")" \
+    -o /tmp/zabbix-release_latest+debian12_all.deb
+  $STD dpkg -i zabbix-release_latest+debian12_all.deb
+  $STD apt-get update
+  $STD apt-get install --only-upgrade zabbix-server-pgsql zabbix-frontend-php zabbix-agent2 zabbix-agent2-plugin-*
 
-if [ $? -ne 0 ]; then
-  echo "❌ Ошибка создания контейнера!"
-  exit 1
-fi
+  msg_info "Starting ${APP} Services"
+  systemctl start zabbix-server zabbix-agent2
+  systemctl restart apache2
+  msg_ok "Started ${APP} Services"
 
-echo "⏳ Ждём пока контейнер запустится..."
-sleep 10
+  msg_info "Cleaning Up"
+  rm -rf /tmp/zabbix-release_latest+debian12_all.deb
+  msg_ok "Cleaned"
+  msg_ok "Updated Successfully"
+  exit
+}
 
-# Установка Zabbix и зависимостей
-echo "📥 Устанавливаем Zabbix и MariaDB в контейнер..."
-pct exec $CT_ID -- bash -c "
-apt update && apt upgrade -y &&
-apt install -y wget curl gnupg lsb-release mariadb-server apache2 php php-mysql php-gd php-xml php-bcmath php-mbstring libapache2-mod-php unzip &&
-wget https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_7.0-1%2Bdebian12_all.deb -O /tmp/zabbix-release.deb &&
-dpkg -i /tmp/zabbix-release.deb &&
-apt update &&
-apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent
-"
+function start() {
+  header_info
+  # Выпиливаем проверку версии
+  # if [[ $(pveversion | grep -oP 'pve-manager/\K[0-9]+\.[0-9]+') < 8.1 ]]; then
+  #   echo -e " ✗ This version of Proxmox Virtual Environment is not supported"
+  #   echo -e "Requires Proxmox Virtual Environment Version 8.1 or later."
+  #   echo -e "Exiting..."
+  #   exit 1
+  # fi
 
-if [ $? -ne 0 ]; then
-  echo "❌ Ошибка при установке Zabbix!"
-  exit 1
-fi
+  build_container
+  description
 
-# Настройка базы данных
-echo "🛠 Настраиваем базу данных Zabbix..."
-pct exec $CT_ID -- bash -c "
-mysql -e \"
-CREATE DATABASE zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
-CREATE USER 'zabbix'@'localhost' IDENTIFIED BY 'zabbixpass';
-GRANT ALL PRIVILEGES ON zabbix.* TO 'zabbix'@'localhost';
-FLUSH PRIVILEGES;
-\" &&
-zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -pzabbixpass zabbix &&
-sed -i 's/# DBPassword=/DBPassword=zabbixpass/' /etc/zabbix/zabbix_server.conf
-"
+  msg_ok "Completed Successfully!\n"
+  echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
+  echo -e "${INFO}${YW} Access it using the following URL:${CL}"
+  echo -e "${TAB}${GATEWAY}${BGN}http://${IP}/zabbix${CL}"
+}
 
-if [ $? -ne 0 ]; then
-  echo "❌ Ошибка настройки базы данных!"
-  exit 1
-fi
-
-# Запуск сервисов
-echo "▶️ Запускаем и включаем сервисы..."
-pct exec $CT_ID -- bash -c "
-systemctl enable mariadb zabbix-server zabbix-agent apache2 &&
-systemctl restart mariadb zabbix-server zabbix-agent apache2
-"
-
-echo ""
-IP=$(pct exec $CT_ID -- hostname -I | awk '{print $1}')
-echo "✅ Установка завершена!"
-echo "🌐 Открой в браузере: http://$IP/zabbix"
-echo "🔐 Логин: Admin | Пароль: zabbix"
+start
