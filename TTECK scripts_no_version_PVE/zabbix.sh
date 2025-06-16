@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+п»ї#!/usr/bin/env bash
 
-# ---------- Настройки ----------
+# ---------- РќР°СЃС‚СЂРѕР№РєРё ----------
 CT_ID=$(pvesh get /cluster/nextid)
 HOSTNAME="zabbix"
 DISK_SIZE="6G"
@@ -11,15 +11,15 @@ TEMPLATE="debian-12-standard_*.tar.zst"
 STORAGE="local-lvm"
 ZBX_PORT=80
 
-# ---------- Проверки ----------
-echo "? Проверка наличия шаблона Debian 12..."
+# ---------- РџСЂРѕРІРµСЂРєРё ----------
+echo "? РџСЂРѕРІРµСЂРєР° РЅР°Р»РёС‡РёСЏ С€Р°Р±Р»РѕРЅР° Debian 12..."
 if ! pveam list | grep -q "$TEMPLATE"; then
-    echo "?? Скачивание шаблона Debian 12..."
+    echo "?? РЎРєР°С‡РёРІР°РЅРёРµ С€Р°Р±Р»РѕРЅР° Debian 12..."
     pveam update
     pveam download local debian-12-standard_2023-*.tar.zst
 fi
 
-echo "?? Создание LXC контейнера ($CT_ID)..."
+echo "?? РЎРѕР·РґР°РЅРёРµ LXC РєРѕРЅС‚РµР№РЅРµСЂР° ($CT_ID)..."
 pct create $CT_ID $(pveam list local | grep debian-12 | awk '{print $1}') \
     -hostname $HOSTNAME \
     -cores $CPU_COUNT \
@@ -31,11 +31,11 @@ pct create $CT_ID $(pveam list local | grep debian-12 | awk '{print $1}') \
     -ostype debian \
     -startup order=2
 
-echo "?? Запуск контейнера..."
+echo "?? Р—Р°РїСѓСЃРє РєРѕРЅС‚РµР№РЅРµСЂР°..."
 pct start $CT_ID
 sleep 5
 
-echo "?? Получение IP-адреса контейнера..."
+echo "?? РџРѕР»СѓС‡РµРЅРёРµ IP-Р°РґСЂРµСЃР° РєРѕРЅС‚РµР№РЅРµСЂР°..."
 CT_IP=""
 for i in {1..10}; do
   CT_IP=$(pct exec $CT_ID -- hostname -I | awk '{print $1}')
@@ -44,11 +44,11 @@ for i in {1..10}; do
 done
 
 if [[ -z "$CT_IP" ]]; then
-    echo "? Не удалось получить IP контейнера"
+    echo "? РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕР»СѓС‡РёС‚СЊ IP РєРѕРЅС‚РµР№РЅРµСЂР°"
     exit 1
 fi
 
-echo "?? Установка Zabbix внутри контейнера..."
+echo "?? РЈСЃС‚Р°РЅРѕРІРєР° Zabbix РІРЅСѓС‚СЂРё РєРѕРЅС‚РµР№РЅРµСЂР°..."
 pct exec $CT_ID -- bash -c "apt update && apt install -y curl gnupg lsb-release"
 
 pct exec $CT_ID -- bash -c "
@@ -57,7 +57,7 @@ dpkg -i /tmp/zabbix-release.deb &&
 apt update &&
 apt install -y zabbix-server-mysql zabbix-frontend-php zabbix-apache-conf zabbix-sql-scripts zabbix-agent mariadb-server"
 
-echo "?? Настройка MariaDB и Zabbix БД..."
+echo "?? РќР°СЃС‚СЂРѕР№РєР° MariaDB Рё Zabbix Р‘Р”..."
 pct exec $CT_ID -- bash -c "
 mysql -e \"
 create database zabbix character set utf8mb4 collate utf8mb4_bin;
@@ -67,16 +67,16 @@ flush privileges;
 \" &&
 zcat /usr/share/zabbix-sql-scripts/mysql/server.sql.gz | mysql -uzabbix -pzabbixpass zabbix"
 
-echo "??? Конфигурация zabbix_server.conf"
+echo "??? РљРѕРЅС„РёРіСѓСЂР°С†РёСЏ zabbix_server.conf"
 pct exec $CT_ID -- sed -i 's/# DBPassword=/DBPassword=zabbixpass/' /etc/zabbix/zabbix_server.conf
 
-echo "? Запуск Zabbix-сервисов..."
+echo "? Р—Р°РїСѓСЃРє Zabbix-СЃРµСЂРІРёСЃРѕРІ..."
 pct exec $CT_ID -- systemctl restart mariadb
 pct exec $CT_ID -- systemctl enable zabbix-server zabbix-agent apache2
 pct exec $CT_ID -- systemctl restart zabbix-server zabbix-agent apache2
 
 echo ""
-echo "?? Готово! Zabbix доступен по адресу:"
+echo "?? Р“РѕС‚РѕРІРѕ! Zabbix РґРѕСЃС‚СѓРїРµРЅ РїРѕ Р°РґСЂРµСЃСѓ:"
 echo "?? http://$CT_IP/zabbix"
-echo "Логин: Admin"
-echo "Пароль: zabbix"
+echo "Р›РѕРіРёРЅ: Admin"
+echo "РџР°СЂРѕР»СЊ: zabbix"
